@@ -7,11 +7,7 @@ import os
 
 
 def process_dataset_faces(
-    dataset_name: str,
-    split: str = "train",
-    model_path: str = "yolov12n-face.pt",
-    batch_size: int = 32,
-    num_proc: int = 1,
+    dataset_name: str, split: str = "train", model_path: str = "yolov12n-face.pt", batch_size: int = 32, num_proc: int = 1, margin_scale: float = 0.2  # Added: default 20% margin
 ):
     """
     Loads a HF dataset, detects faces using YOLO, crops the largest face,
@@ -83,16 +79,31 @@ def process_dataset_faces(
             max_area_idx = torch.argmax(areas).item()
 
             # Get coordinates of the largest face
-            # Convert to int for PIL cropping
-            best_box = xyxy[max_area_idx].cpu().numpy().astype(int)
+            best_box = xyxy[max_area_idx].cpu().numpy()
             x1, y1, x2, y2 = best_box
 
+            # --- Adaptive Margin Logic ---
+            # Get image dimensions for boundary safety checks
+            img_w, img_h = original_img.size
+
+            # Calculate margin based on bbox size
+            box_w = x2 - x1
+            box_h = y2 - y1
+
+            x_pad = box_w * margin_scale
+            y_pad = box_h * margin_scale
+
+            # Apply margin and Clamp to image boundaries (Safety Mechanism)
+            x1 = max(0, int(x1 - x_pad))
+            y1 = max(0, int(y1 - y_pad))
+            x2 = min(img_w, int(x2 + x_pad))
+            y2 = min(img_h, int(y2 + y_pad))
+
             # Crop the face
-            # Add a small padding if desired (optional, omitted here for strict bbox)
             face_crop = original_img.crop((x1, y1, x2, y2))
             cropped_images.append(face_crop)
-        batch["image"] = cropped_images
 
+        batch["image"] = cropped_images
         return batch
 
     # 4. Apply Map with Batching
@@ -100,7 +111,7 @@ def process_dataset_faces(
     # We use batched=True to send lists of images to YOLO.
     # num_proc=1 is recommended with GPU usage to avoid CUDA forking errors.
     # If using CPU only, you can increase num_proc (e.g., 4 or 8).
-    processed_dataset = dataset.map(batch_detect_and_crop, batched=True, batch_size=batch_size, num_proc=1 if device == "cuda" else num_proc, desc="Detecting and Cropping Faces")
+    processed_dataset = dataset.map(batch_detect_and_crop, batched=True, batch_size=batch_size, num_proc=None if device == "cuda" else num_proc, desc="Detecting and Cropping Faces")
 
     # 5. Filter out images where no face was detected (None values)
     print("Filtering out images with no faces...")
@@ -122,10 +133,16 @@ if __name__ == "__main__":
     # Download the model weight first if you haven't:
     # !wget https://github.com/akanametov/yolo-face/releases/download/v0.0.0/yolov8n-face.pt
 
-    new_dataset = process_dataset_faces(dataset_name=TARGET_DATASET, batch_size=64, num_proc=4)  # Adjust based on your GPU VRAM  # Use >1 only if using CPU
+    new_dataset = process_dataset_faces(
+        dataset_name=TARGET_DATASET,
+        split="train",
+        batch_size=256,
+        num_proc=4,
+        margin_scale=0.2,
+    )  # Adjust based on your GPU VRAM  # Use >1 only if using CPU  # Example: 30% margin
 
     # Optional: Save the new dataset to disk
     # new_dataset.save_to_disk("cropped_faces_dataset")
 
     # Optional: Push to Hugging Face Hub
-    # new_dataset.push_to_hub("your_username/cropped_faces_dataset")
+    new_dataset.push_to_hub(TARGET_DATASET + "-CF")
