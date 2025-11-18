@@ -135,14 +135,15 @@ if __name__ == "__main__":
 
     new_dataset = process_dataset_faces(
         dataset_name=TARGET_DATASET,
-        split="train",
+        split="train[:1024]",
         batch_size=256,
         num_proc=4,
-        margin_scale=0.2,
+        margin_scale=0.3,
     )  # Adjust based on your GPU VRAM  # Use >1 only if using CPU  # Example: 30% margin
 
     # Optional: Save the new dataset to disk
     # new_dataset.save_to_disk("cropped_faces_dataset")
 
+    new_dataset[0]["image"].save("sample_cropped_face.jpg")  # Save a sample image
     # Optional: Push to Hugging Face Hub
-    new_dataset.push_to_hub(TARGET_DATASET + "-CF")
+    new_dataset.push_to_hub(TARGET_DATASET + "-CF", "margin30", split="train")
